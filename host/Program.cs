@@ -199,11 +199,25 @@ sealed class TrayContext : ApplicationContext
         static bool On(JsonElement r) => r.TryGetProperty("on", out var v) && v.ValueKind == JsonValueKind.True;
         switch (type)
         {
-            case "ready": PushState(); break;
+            case "ready": PushState(); main?.Post(FontsJson()); break;
             case "apply": walls.ForEach(x => x.Post("{\"type\":\"reload\"}")); break;
             case "setEnabled": SetEnabled(On(root)); break;
             case "setAutoStart": SetAutoStart(On(root)); break;
         }
+    }
+
+    // 이 PC에 설치된 글꼴 이름 목록 (편집기의 글꼴 선택에 쓰인다)
+    static string FontsJson()
+    {
+        string[] names = Array.Empty<string>();
+        try
+        {
+            using var fc = new System.Drawing.Text.InstalledFontCollection();
+            names = fc.Families.Select(f => f.Name).Where(n => n.Length > 0 && n[0] != '@').Distinct()
+                .OrderBy(n => n, StringComparer.CurrentCulture).ToArray();
+        }
+        catch { }
+        return "{\"type\":\"fonts\",\"list\":" + JsonSerializer.Serialize(names) + "}";
     }
 
     static bool IsAutoStart()

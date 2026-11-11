@@ -33,7 +33,9 @@ button.wide{width:100%;padding:8px}
 .row>input,.row>select{flex:1}
 .row input[type=checkbox]{flex:0 0 auto}
 .row input[type=color]{flex:0 0 44px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;background:none}
-.row b{flex:0 0 38px;text-align:right;font-weight:400;color:var(--mut);font-variant-numeric:tabular-nums}
+.row input.num{flex:0 0 58px;padding:3px 4px;text-align:right;font-variant-numeric:tabular-nums}
+.row input.frames{flex:0 0 62px;padding:5px 4px;text-align:right}
+.row button.x{flex:0 0 auto;border:0;background:none;color:var(--mut);padding:2px 4px}.row button.x:hover{color:var(--danger)}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .two label{display:flex;align-items:center;gap:6px}.two span{color:var(--mut);flex:0 0 14px}.two input{flex:1;width:100%}
 input[type=range]{accent-color:var(--acc);min-width:0}
@@ -396,6 +398,9 @@ function drawWave(c,L,t){const p=L.props,w=L.w,h=L.h,base=c.globalAlpha,step=Mat
   c.globalAlpha=base*(.28+.16*k);c.fill();}}
 function textStyle(c,L,K){const p=L.props;c.font=`${p.bold?700:300} ${L.h*.8}px ${p.font}`;c.textBaseline='middle';c.fillStyle=c.strokeStyle=p.color;
  if(p.glow>0){c.shadowColor=p.color;c.shadowBlur=p.glow*K;}}
+/* 글자 애니메이션: seq=[{text,frames}]를 장면 FPS 기준 프레임 수만큼씩 보여 주며 순환한다. 비어 있으면 text를 쓴다. */
+function seqText(p,S){const q=p.seq;if(!q||!q.length)return p.text||'';let tot=0;for(const e of q)tot+=Math.max(1,e.frames|0);
+ let f=Math.floor(T*(S.fps||30)+1e-6)%tot;for(const e of q){f-=Math.max(1,e.frames|0);if(f<0)return e.text||'';}return'';}
 function drawText(c,L,str,K){textStyle(c,L,K);c.textAlign='center';c.fillText(str,0,L.h*.04);}
 const DAYS='일월화수목금토';
 const p2=n=>String(n).padStart(2,'0');
@@ -430,7 +435,7 @@ function render(dt,c=ctx,S=scene,V=view){const K=V.s,now=new Date();
      else{c.strokeStyle='#ff6b7a';c.lineWidth=2/K*2;c.strokeRect(-L.w/2,-L.h/2,L.w,L.h);}break;}
    case'shape':{const p=L.props;if(p.glow>0){c.shadowColor=p.color;c.shadowBlur=p.glow*K;}shapePath(c,p.shape,L.w/2,L.h/2);
      if(p.fill){c.fillStyle=p.color;c.fill();}else{c.strokeStyle=p.color;c.lineWidth=p.stroke||4;c.lineJoin='round';c.stroke();}break;}
-   case'text':drawText(c,L,L.props.text||'',K);break;
+   case'text':drawText(c,L,seqText(L.props,S),K);break;
    case'date':drawText(c,L,dateStr(now,L.props.fmt),K);break;
    case'clock':drawClock(c,L,now,K);break;
    case'particles':drawParticles(c,L,T,dt);break;
@@ -443,6 +448,7 @@ function analyze(){let cont=false,tk=false,ms=false;
  for(const L of scene.layers){if(!L.visible)continue;
   if(L.anims.length){cont=true;if(L.anims.some(a=>a.type==='parallax'))ms=true;}
   if(L.type==='particles'||L.type==='wave')cont=true;
+  if(L.type==='text'&&L.props.seq&&L.props.seq.length>1)cont=true;
   if(L.props.asset){const im=images.get(L.props.asset);if(im&&im.frames)cont=true;}
   if(L.type==='clock'){tk=true;if(L.props.style==='analog'&&L.props.smooth&&L.props.seconds)cont=true;}
   if(L.type==='date')tk=true;}
@@ -505,10 +511,15 @@ function moveLayer(id,d){const a=scene.layers,i=a.findIndex(L=>L.id===id),j=i+d;
 function duplicate(){const L=selLayer();if(!L)return;const c=JSON.parse(JSON.stringify(L));c.id=uid();c.name+=' 복사';c.x+=30;c.y+=30;addLayer(c);}
 
 function inp(obj,key,kind,o){o=o||{};let i,out=null;
- if(kind==='select'){i=el('select');for(const[v,n]of o.opts)i.add(new Option(n,v));i.value=obj[key];}
+ if(kind==='select'){i=el('select');for(const[v,n]of o.opts)i.add(new Option(n,v));
+  // 목록에 없는 값(예: 다른 PC에서 만든 장면의 글꼴)도 그대로 보여 준다
+  if(obj[key]!=null&&![...i.options].some(x=>x.value===String(obj[key])))i.add(new Option(String(obj[key]).split(',')[0].replace(/"/g,''),obj[key]));i.value=obj[key];}
  else{i=el('input');i.type=kind;if(kind==='checkbox')i.checked=!!obj[key];else{if(o.min!=null)i.min=o.min;if(o.max!=null)i.max=o.max;if(o.step!=null)i.step=o.step;i.value=obj[key];}}
- if(kind==='range')out=el('b','',String(obj[key]));
- i.oninput=()=>{obj[key]=kind==='checkbox'?i.checked:(kind==='number'||kind==='range')?(+i.value||0):i.value;if(out)out.textContent=i.value;if(o.on)o.on();touched();};
+ // 슬라이더 옆에 값을 직접 입력할 수 있는 숫자 칸을 함께 둔다 (범위를 벗어나면 범위 안으로 맞춤)
+ if(kind==='range'){out=el('input','num');out.type='number';out.min=o.min;out.max=o.max;out.step=o.step;out.value=obj[key];
+  out.oninput=()=>{if(out.value===''||isNaN(+out.value))return;const v=Math.min(o.max,Math.max(o.min,+out.value));obj[key]=v;i.value=v;if(o.on)o.on();touched();};
+  out.onchange=()=>{out.value=obj[key];commit();if(o.done)o.done();};}
+ i.oninput=()=>{obj[key]=kind==='checkbox'?i.checked:(kind==='number'||kind==='range')?(+i.value||0):i.value;if(out)out.value=i.value;if(o.on)o.on();touched();};
  i.onchange=()=>{commit();if(o.done)o.done();};
  return out?[i,out]:[i];}
 function row(label,obj,key,kind,o){const r=el('label','row');r.append(el('span','',label),...inp(obj,key,kind,o));return r;}
@@ -547,6 +558,12 @@ function renderInspector(){const R=$('#right');R.textContent='';xf=null;const L=
   if(kind==='asset'){const r=el('div','row'),b=el('button','',L.props.asset?'다른 이미지 선택…':'이미지 선택…');b.style.flex='1';b.onclick=()=>pickAsset(L);r.append(el('span','',lb),b);R.append(r);
    if(!L.props.asset)R.append(el('div','note','이미지를 고르기 전에는 원으로 표시됩니다. 움직이는 GIF도 쓸 수 있습니다.'));}
   else R.append(row(lb,L.props,k,kind,o));}
+ if(L.type==='text'){const p=L.props,q=p.seq||[];R.append(el('h3','','글자 애니메이션'));
+  q.forEach((e,i)=>{const r=el('div','row'),[t]=inp(e,'text','text'),[n]=inp(e,'frames','number',{min:1,step:1}),x=el('button','x','✕');
+   t.placeholder='쓸 내용';n.className='frames';n.title='이 내용을 보여 줄 프레임 수';x.title='이 줄 삭제';x.onclick=()=>{q.splice(i,1);if(!q.length)delete p.seq;commit();renderInspector();};r.append(t,n,x);R.append(r);});
+  const add=el('button','wide','＋ 내용 추가');add.onclick=()=>{if(!p.seq)p.seq=[{text:p.text||'',frames:scene.fps}];else p.seq.push({text:'',frames:scene.fps});commit();renderInspector();};R.append(add);
+  R.append(el('div','note',q.length?'위에서부터 차례로 보여 주고 처음으로 돌아갑니다. 오른쪽 숫자는 프레임 수입니다 (현재 '+scene.fps+'프레임 = 1초). 목록이 있으면 위의 "내용" 대신 목록을 씁니다.'
+   :'"쓸 내용 – 프레임 수" 목록을 만들면 글자가 그 순서대로 바뀌며 반복됩니다.'));}
  const acts=el('div','row');const b1=el('button','','복제');b1.onclick=duplicate;const b2=el('button','','화면 채우기');
  b2.onclick=()=>{const im=L.type==='image'&&images.get(L.props.asset);if(im){const k=Math.max(scene.w/im.width,scene.h/im.height);L.w=im.width*k;L.h=im.height*k;}else{L.w=scene.w;L.h=scene.h;}L.x=scene.w/2;L.y=scene.h/2;L.rot=0;commit();renderInspector();};
  const b3=el('button','','삭제');b3.style.color='var(--danger)';b3.onclick=()=>removeLayer(L.id);acts.append(b1,b2,b3);R.append(acts);
@@ -649,7 +666,11 @@ async function renderHome(){const out=[];
  $('#cards').replaceChildren(...out);}
 function syncHost(){$('#cOn').checked=hostState.enabled;$('#swLabel').textContent=hostState.enabled?'바탕화면 켜짐':'바탕화면 꺼짐';$('#cAuto').checked=hostState.autostart;}
 if(host&&MODE==='editor'){document.body.classList.add('hosted');
- host.addEventListener('message',e=>{const m=e.data||{};if(m.type==='state'){hostState.enabled=!!m.enabled;hostState.autostart=!!m.autostart;syncHost();}});}
+ host.addEventListener('message',e=>{const m=e.data||{};if(m.type==='state'){hostState.enabled=!!m.enabled;hostState.autostart=!!m.autostart;syncHost();}
+  else if(m.type==='fonts'&&Array.isArray(m.list))setFonts(m.list);});}
+/* 호스트가 알려 준 "이 PC에 설치된 글꼴"을 기본 글꼴 뒤에 붙인다 */
+const BASE_FONTS=FONTS.length;
+function setFonts(list){FONTS.length=BASE_FONTS;for(const n of list){const s=String(n).replace(/["\\]/g,'');if(s)FONTS.push(['"'+s+'","Malgun Gothic",sans-serif',s]);}if(curId)renderInspector();}
 /* 처음 실행(또는 이전 버전에서 넘어온 경우): 기존 초안/적용본을 보관함 항목으로 옮긴다 */
 async function loadLib(){let a=null;try{a=JSON.parse(await Store.get('kv','lib')||'null');}catch(e){}
  if(Array.isArray(a)){lib=a;activeId=await Store.get('kv','active')||null;if(activeId&&!entry(activeId))activeId=null;return;}
