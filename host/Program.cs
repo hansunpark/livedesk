@@ -1,5 +1,5 @@
 // LiveDesk 호스트: app/index.html(렌더러)을 WebView2로 띄워 바탕화면 아이콘 뒤(WorkerW)에 붙인다.
-// 트레이 아이콘에서 에디터 열기 / 일시정지 / 자동 시작 / 종료를 제어한다.
+// 메인 창(보관함 + 편집기)과 트레이 아이콘에서 바탕화면 켜기/끄기, 자동 시작, 종료를 제어한다.
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -15,12 +15,41 @@ static class Program
     public const string Origin = "https://livedesk.app/";
 
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
         using var mutex = new Mutex(true, "LiveDesk.SingleInstance", out bool first);
-        if (!first) return;
+        // 이미 실행 중이면 기존 인스턴스의 창을 띄우게 하고 끝낸다.
+        using var show = new EventWaitHandle(false, EventResetMode.AutoReset, "LiveDesk.ShowWindow");
+        if (!first) { show.Set(); return; }
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayContext());
+        Application.Run(new TrayContext(show, startHidden: args.Contains("--tray")));
+    }
+}
+
+// %LocalAppData%\LiveDesk\settings.json
+static class Settings
+{
+    static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LiveDesk");
+    static readonly string File = Path.Combine(Dir, "settings.json");
+
+    public static bool LoadEnabled()
+    {
+        try
+        {
+            var root = JsonDocument.Parse(System.IO.File.ReadAllText(File)).RootElement;
+            return !root.TryGetProperty("enabled", out var v) || v.ValueKind != JsonValueKind.False;
+        }
+        catch { return true; }
+    }
+
+    public static void SaveEnabled(bool enabled)
+    {
+        try
+        {
+            Directory.CreateDirectory(Dir);
+            System.IO.File.WriteAllText(File, "{\"enabled\":" + (enabled ? "true" : "false") + "}");
+        }
+        catch { }
     }
 }
 
@@ -28,30 +57,36 @@ sealed class TrayContext : ApplicationContext
 {
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     readonly NotifyIcon tray;
-    readonly ToolStripMenuItem pauseItem, autoItem;
+    readonly ToolStripMenuItem onItem, autoItem;
     readonly List<WallpaperForm> walls = new();
     readonly System.Windows.Forms.Timer stateTimer = new() { Interval = 500 };
     readonly System.Windows.Forms.Timer mouseTimer = new() { Interval = 33 };
+    readonly Control ui = new();          // 다른 스레드에서 UI 스레드로 넘어오기 위한 핸들
+    readonly bool startHidden;
     CoreWebView2Environment? env;
-    EditorForm? editor;
-    bool userPaused;
+    MainForm? main;
+    bool enabled = Settings.LoadEnabled();
+    bool hideTipShown;
 
-    public TrayContext()
+    public TrayContext(EventWaitHandle show, bool startHidden)
     {
-        pauseItem = new ToolStripMenuItem("일시정지", null, (_, _) => { userPaused = !userPaused; pauseItem!.Checked = userPaused; UpdateState(); });
-        autoItem = new ToolStripMenuItem("Windows 시작 시 자동 실행", null, (_, _) => ToggleAutoStart()) { Checked = IsAutoStart() };
+        this.startHidden = startHidden;
+        _ = ui.Handle;
+        onItem = new ToolStripMenuItem("바탕화면 켜기", null, (_, _) => SetEnabled(!enabled)) { Checked = enabled };
+        autoItem = new ToolStripMenuItem("Windows 시작 시 자동 실행", null, (_, _) => SetAutoStart(!IsAutoStart())) { Checked = IsAutoStart() };
         var menu = new ContextMenuStrip();
-        menu.Items.Add("에디터 열기", null, (_, _) => OpenEditor());
-        menu.Items.Add(pauseItem);
+        menu.Items.Add("LiveDesk 열기", null, (_, _) => OpenMain());
+        menu.Items.Add(onItem);
         menu.Items.Add(autoItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("종료", null, (_, _) => Quit());
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "LiveDesk", Visible = true, ContextMenuStrip = menu };
-        tray.DoubleClick += (_, _) => OpenEditor();
+        tray.DoubleClick += (_, _) => OpenMain();
 
         stateTimer.Tick += (_, _) => UpdateState();
         mouseTimer.Tick += (_, _) => SendMouse();
         SystemEvents.DisplaySettingsChanged += (_, _) => BuildWalls();
+        ThreadPool.RegisterWaitForSingleObject(show, (_, _) => { try { ui.BeginInvoke(OpenMain); } catch { } }, null, -1, false);
         _ = InitAsync();
     }
 
@@ -70,6 +105,7 @@ sealed class TrayContext : ApplicationContext
         }
         BuildWalls();
         stateTimer.Start();
+        if (!startHidden) OpenMain();
     }
 
     void BuildWalls()
@@ -77,6 +113,7 @@ sealed class TrayContext : ApplicationContext
         if (env == null) return;
         foreach (var w in walls) w.Close();
         walls.Clear();
+        if (!enabled) return;
         IntPtr workerW = Native.GetWorkerW();
         if (workerW == IntPtr.Zero)
         {
@@ -98,7 +135,7 @@ sealed class TrayContext : ApplicationContext
     {
         Screen? covered = Native.CoveredScreen();
         foreach (var w in walls)
-            w.SetPaused(userPaused || (covered != null && covered.DeviceName == w.Screen.DeviceName));
+            w.SetPaused((covered != null && covered.DeviceName == w.Screen.DeviceName));
         mouseTimer.Enabled = walls.Any(x => x.NeedsMouse && !x.Paused);
     }
 
@@ -116,16 +153,57 @@ sealed class TrayContext : ApplicationContext
         }
     }
 
-    void OpenEditor()
+    // 바탕화면 켜기/끄기: 끄면 배경 창을 모두 닫고 원래 Windows 배경화면으로 되돌린다.
+    void SetEnabled(bool on)
+    {
+        if (on != enabled)
+        {
+            enabled = on;
+            Settings.SaveEnabled(on);
+            onItem.Checked = on;
+            if (on) BuildWalls();
+            else
+            {
+                foreach (var w in walls) w.Close();
+                walls.Clear();
+                mouseTimer.Stop();
+                Native.RefreshWallpaper();
+            }
+        }
+        PushState();
+    }
+
+    void PushState() =>
+        main?.Post("{\"type\":\"state\",\"enabled\":" + (enabled ? "true" : "false") + ",\"autostart\":" + (IsAutoStart() ? "true" : "false") + "}");
+
+    void OpenMain()
     {
         if (env == null) return;
-        if (editor == null || editor.IsDisposed)
+        if (main == null || main.IsDisposed)
         {
-            editor = new EditorForm(env, () => walls.ForEach(x => x.Post("{\"type\":\"reload\"}")));
-            editor.Show();
+            main = new MainForm(env, OnMainMessage);
+            main.HiddenToTray += () =>
+            {
+                if (hideTipShown) return;
+                hideTipShown = true;
+                tray.ShowBalloonTip(3000, "LiveDesk", "트레이에서 계속 실행 중입니다. 아이콘을 더블클릭하면 다시 열립니다.", ToolTipIcon.Info);
+            };
         }
-        if (editor.WindowState == FormWindowState.Minimized) editor.WindowState = FormWindowState.Normal;
-        editor.Activate();
+        main.Show();
+        if (main.WindowState == FormWindowState.Minimized) main.WindowState = FormWindowState.Normal;
+        main.Activate();
+    }
+
+    void OnMainMessage(string type, JsonElement root)
+    {
+        static bool On(JsonElement r) => r.TryGetProperty("on", out var v) && v.ValueKind == JsonValueKind.True;
+        switch (type)
+        {
+            case "ready": PushState(); break;
+            case "apply": walls.ForEach(x => x.Post("{\"type\":\"reload\"}")); break;
+            case "setEnabled": SetEnabled(On(root)); break;
+            case "setAutoStart": SetAutoStart(On(root)); break;
+        }
     }
 
     static bool IsAutoStart()
@@ -134,12 +212,18 @@ sealed class TrayContext : ApplicationContext
         return k?.GetValue("LiveDesk") != null;
     }
 
-    void ToggleAutoStart()
+    // 자동 실행으로 켜질 때는 창 없이 트레이로만 시작한다.
+    void SetAutoStart(bool on)
     {
-        using var k = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (IsAutoStart()) k.DeleteValue("LiveDesk", false);
-        else k.SetValue("LiveDesk", "\"" + Application.ExecutablePath + "\"");
+        try
+        {
+            using var k = Registry.CurrentUser.CreateSubKey(RunKey);
+            if (on) k.SetValue("LiveDesk", "\"" + Application.ExecutablePath + "\" --tray");
+            else k.DeleteValue("LiveDesk", false);
+        }
+        catch { }
         autoItem.Checked = IsAutoStart();
+        PushState();
     }
 
     void Quit()
@@ -148,7 +232,7 @@ sealed class TrayContext : ApplicationContext
         mouseTimer.Stop();
         foreach (var w in walls) w.Close();
         walls.Clear();
-        editor?.Close();
+        if (main != null && !main.IsDisposed) { main.AllowClose = true; main.Close(); }
         tray.Visible = false;
         Native.RefreshWallpaper();
         ExitThread();
@@ -251,27 +335,48 @@ sealed class WallpaperForm : Form
     }
 }
 
-sealed class EditorForm : Form
+// 메인 창: 보관함(저장해 둔 바탕화면 목록)과 편집기를 한 WebView2 안에서 보여 준다. 닫으면 트레이로 숨는다.
+sealed class MainForm : Form
 {
     readonly WebView2 wv = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(20, 22, 28) };
+    CoreWebView2? core;
+    public bool AllowClose;
+    public event Action? HiddenToTray;
 
-    public EditorForm(CoreWebView2Environment env, Action onApply)
+    public MainForm(CoreWebView2Environment env, Action<string, JsonElement> onMessage)
     {
-        Text = "LiveDesk 에디터";
+        Text = "LiveDesk";
         Icon = SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         var wa = Screen.PrimaryScreen!.WorkingArea;
         Size = new Size(Math.Min(1500, wa.Width - 80), Math.Min(920, wa.Height - 80));
+        MinimumSize = new Size(960, 600);
         Controls.Add(wv);
         Load += async (_, _) =>
         {
             try
             {
-                var core = await Web.InitAsync(wv, env, "");
-                core.WebMessageReceived += (_, e) => { if (Web.MessageType(e, out _) == "apply") onApply(); };
+                core = await Web.InitAsync(wv, env, "");
+                core.WebMessageReceived += (_, e) =>
+                {
+                    string? type = Web.MessageType(e, out JsonElement root);
+                    if (type != null) onMessage(type, root);
+                };
             }
             catch { }
         };
+        FormClosing += (_, e) =>
+        {
+            if (AllowClose || e.CloseReason != CloseReason.UserClosing) return;
+            e.Cancel = true;
+            Hide();
+            HiddenToTray?.Invoke();
+        };
+    }
+
+    public void Post(string json)
+    {
+        try { core?.PostWebMessageAsJson(json); } catch { }
     }
 }
 
