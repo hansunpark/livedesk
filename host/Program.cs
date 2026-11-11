@@ -1,0 +1,334 @@
+// LiveDesk 호스트: app/index.html(렌더러)을 WebView2로 띄워 바탕화면 아이콘 뒤(WorkerW)에 붙인다.
+// 트레이 아이콘에서 에디터 열기 / 일시정지 / 자동 시작 / 종료를 제어한다.
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
+using Microsoft.Win32;
+
+namespace LiveDesk;
+
+static class Program
+{
+    public const string Origin = "https://livedesk.app/";
+
+    [STAThread]
+    static void Main()
+    {
+        using var mutex = new Mutex(true, "LiveDesk.SingleInstance", out bool first);
+        if (!first) return;
+        ApplicationConfiguration.Initialize();
+        Application.Run(new TrayContext());
+    }
+}
+
+sealed class TrayContext : ApplicationContext
+{
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    readonly NotifyIcon tray;
+    readonly ToolStripMenuItem pauseItem, autoItem;
+    readonly List<WallpaperForm> walls = new();
+    readonly System.Windows.Forms.Timer stateTimer = new() { Interval = 500 };
+    readonly System.Windows.Forms.Timer mouseTimer = new() { Interval = 33 };
+    CoreWebView2Environment? env;
+    EditorForm? editor;
+    bool userPaused;
+
+    public TrayContext()
+    {
+        pauseItem = new ToolStripMenuItem("일시정지", null, (_, _) => { userPaused = !userPaused; pauseItem!.Checked = userPaused; UpdateState(); });
+        autoItem = new ToolStripMenuItem("Windows 시작 시 자동 실행", null, (_, _) => ToggleAutoStart()) { Checked = IsAutoStart() };
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("에디터 열기", null, (_, _) => OpenEditor());
+        menu.Items.Add(pauseItem);
+        menu.Items.Add(autoItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("종료", null, (_, _) => Quit());
+        tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "LiveDesk", Visible = true, ContextMenuStrip = menu };
+        tray.DoubleClick += (_, _) => OpenEditor();
+
+        stateTimer.Tick += (_, _) => UpdateState();
+        mouseTimer.Tick += (_, _) => SendMouse();
+        SystemEvents.DisplaySettingsChanged += (_, _) => BuildWalls();
+        _ = InitAsync();
+    }
+
+    async Task InitAsync()
+    {
+        try
+        {
+            string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LiveDesk", "WebView2");
+            env = await CoreWebView2Environment.CreateAsync(null, data);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("WebView2 런타임을 시작할 수 없습니다.\nMicrosoft Edge WebView2 Runtime을 설치한 뒤 다시 실행해 주세요.\n\n" + ex.Message, "LiveDesk");
+            Quit();
+            return;
+        }
+        BuildWalls();
+        stateTimer.Start();
+    }
+
+    void BuildWalls()
+    {
+        if (env == null) return;
+        foreach (var w in walls) w.Close();
+        walls.Clear();
+        IntPtr workerW = Native.GetWorkerW();
+        if (workerW == IntPtr.Zero)
+        {
+            tray.ShowBalloonTip(4000, "LiveDesk", "바탕화면 창을 찾지 못해 배경화면을 붙일 수 없습니다.", ToolTipIcon.Warning);
+            return;
+        }
+        foreach (var screen in Screen.AllScreens)
+        {
+            var w = new WallpaperForm(env, screen);
+            w.ConfigChanged += () => mouseTimer.Enabled = walls.Any(x => x.NeedsMouse && !x.Paused);
+            walls.Add(w);
+            w.AttachTo(workerW);
+        }
+        UpdateState();
+    }
+
+    // 전체화면/최대화 창이 덮은 모니터의 배경화면은 그리기를 멈춘다.
+    void UpdateState()
+    {
+        Screen? covered = Native.CoveredScreen();
+        foreach (var w in walls)
+            w.SetPaused(userPaused || (covered != null && covered.DeviceName == w.Screen.DeviceName));
+        mouseTimer.Enabled = walls.Any(x => x.NeedsMouse && !x.Paused);
+    }
+
+    void SendMouse()
+    {
+        if (!Native.GetCursorPos(out var p)) return;
+        foreach (var w in walls)
+        {
+            if (!w.NeedsMouse || w.Paused) continue;
+            var b = w.Screen.Bounds;
+            if (!b.Contains(p.X, p.Y)) continue;
+            string x = ((p.X - b.X) / (double)b.Width).ToString("0.####", CultureInfo.InvariantCulture);
+            string y = ((p.Y - b.Y) / (double)b.Height).ToString("0.####", CultureInfo.InvariantCulture);
+            w.Post("{\"type\":\"mouse\",\"x\":" + x + ",\"y\":" + y + "}");
+        }
+    }
+
+    void OpenEditor()
+    {
+        if (env == null) return;
+        if (editor == null || editor.IsDisposed)
+        {
+            editor = new EditorForm(env, () => walls.ForEach(x => x.Post("{\"type\":\"reload\"}")));
+            editor.Show();
+        }
+        if (editor.WindowState == FormWindowState.Minimized) editor.WindowState = FormWindowState.Normal;
+        editor.Activate();
+    }
+
+    static bool IsAutoStart()
+    {
+        using var k = Registry.CurrentUser.OpenSubKey(RunKey);
+        return k?.GetValue("LiveDesk") != null;
+    }
+
+    void ToggleAutoStart()
+    {
+        using var k = Registry.CurrentUser.CreateSubKey(RunKey);
+        if (IsAutoStart()) k.DeleteValue("LiveDesk", false);
+        else k.SetValue("LiveDesk", "\"" + Application.ExecutablePath + "\"");
+        autoItem.Checked = IsAutoStart();
+    }
+
+    void Quit()
+    {
+        stateTimer.Stop();
+        mouseTimer.Stop();
+        foreach (var w in walls) w.Close();
+        walls.Clear();
+        editor?.Close();
+        tray.Visible = false;
+        Native.RefreshWallpaper();
+        ExitThread();
+    }
+}
+
+static class Web
+{
+    public static async Task<CoreWebView2> InitAsync(WebView2 wv, CoreWebView2Environment env, string query)
+    {
+        await wv.EnsureCoreWebView2Async(env);
+        var core = wv.CoreWebView2;
+        core.SetVirtualHostNameToFolderMapping("livedesk.app", Path.Combine(AppContext.BaseDirectory, "app"), CoreWebView2HostResourceAccessKind.Allow);
+        core.Settings.IsStatusBarEnabled = false;
+        core.Settings.AreDevToolsEnabled = false;
+        core.Settings.IsZoomControlEnabled = false;
+        core.Navigate(Program.Origin + "index.html" + query);
+        return core;
+    }
+
+    public static string? MessageType(CoreWebView2WebMessageReceivedEventArgs e, out JsonElement root)
+    {
+        root = default;
+        try
+        {
+            root = JsonDocument.Parse(e.WebMessageAsJson).RootElement;
+            return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("type", out var t) ? t.GetString() : null;
+        }
+        catch { return null; }
+    }
+}
+
+sealed class WallpaperForm : Form
+{
+    readonly WebView2 wv = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.Black };
+    readonly CoreWebView2Environment env;
+    CoreWebView2? core;
+    public Screen Screen { get; }
+    public bool NeedsMouse { get; private set; }
+    public bool Paused { get; private set; }
+    public event Action? ConfigChanged;
+
+    public WallpaperForm(CoreWebView2Environment env, Screen screen)
+    {
+        this.env = env; Screen = screen;
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        BackColor = Color.Black;
+        Bounds = screen.Bounds;
+        Controls.Add(wv);
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get { var cp = base.CreateParams; cp.ExStyle |= 0x80 /*TOOLWINDOW*/ | 0x08000000 /*NOACTIVATE*/; return cp; }
+    }
+
+    public void AttachTo(IntPtr workerW)
+    {
+        Show();
+        Native.SetParent(Handle, workerW);
+        var pt = new Native.POINT { X = Screen.Bounds.X, Y = Screen.Bounds.Y };
+        Native.ScreenToClient(workerW, ref pt);
+        Native.SetWindowPos(Handle, IntPtr.Zero, pt.X, pt.Y, Screen.Bounds.Width, Screen.Bounds.Height, 0x0004 | 0x0010 | 0x0040);
+        _ = InitAsync();
+    }
+
+    async Task InitAsync()
+    {
+        try
+        {
+            core = await Web.InitAsync(wv, env, "?mode=wallpaper");
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.WebMessageReceived += (_, e) =>
+            {
+                string? type = Web.MessageType(e, out var root);
+                if (type == "config")
+                {
+                    NeedsMouse = root.TryGetProperty("mouse", out var m) && m.ValueKind == JsonValueKind.True;
+                    ConfigChanged?.Invoke();
+                }
+            };
+            core.NavigationCompleted += (_, _) => { if (Paused) Post("{\"type\":\"pause\"}"); };
+        }
+        catch { /* 창이 먼저 닫힌 경우 */ }
+    }
+
+    public void Post(string json)
+    {
+        try { core?.PostWebMessageAsJson(json); } catch { }
+    }
+
+    public void SetPaused(bool paused)
+    {
+        if (paused == Paused) return;
+        Paused = paused;
+        Post(paused ? "{\"type\":\"pause\"}" : "{\"type\":\"resume\"}");
+        try { if (core != null) core.MemoryUsageTargetLevel = paused ? CoreWebView2MemoryUsageTargetLevel.Low : CoreWebView2MemoryUsageTargetLevel.Normal; } catch { }
+    }
+}
+
+sealed class EditorForm : Form
+{
+    readonly WebView2 wv = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(20, 22, 28) };
+
+    public EditorForm(CoreWebView2Environment env, Action onApply)
+    {
+        Text = "LiveDesk 에디터";
+        Icon = SystemIcons.Application;
+        StartPosition = FormStartPosition.CenterScreen;
+        var wa = Screen.PrimaryScreen!.WorkingArea;
+        Size = new Size(Math.Min(1500, wa.Width - 80), Math.Min(920, wa.Height - 80));
+        Controls.Add(wv);
+        Load += async (_, _) =>
+        {
+            try
+            {
+                var core = await Web.InitAsync(wv, env, "");
+                core.WebMessageReceived += (_, e) => { if (Web.MessageType(e, out _) == "apply") onApply(); };
+            }
+            catch { }
+        };
+    }
+}
+
+static class Native
+{
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? name);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string? name);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+    [DllImport("user32.dll")] public static extern IntPtr SetParent(IntPtr child, IntPtr parent);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr h, ref POINT p);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SystemParametersInfo(uint action, uint p, string? v, uint flags);
+
+    // Progman에 0x052C를 보내면 아이콘 뒤에 그릴 수 있는 WorkerW 창이 만들어진다.
+    public static IntPtr GetWorkerW()
+    {
+        IntPtr progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) return IntPtr.Zero;
+        SendMessageTimeout(progman, 0x052C, new IntPtr(0xD), new IntPtr(0x1), 0, 1000, out _);
+        IntPtr workerW = IntPtr.Zero;
+        EnumWindows((top, _) =>
+        {
+            if (FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
+                workerW = FindWindowEx(IntPtr.Zero, top, "WorkerW", null);
+            return true;
+        }, IntPtr.Zero);
+        // Windows 11 24H2 이후: WorkerW가 Progman의 자식으로 들어간다.
+        if (workerW == IntPtr.Zero) workerW = FindWindowEx(progman, IntPtr.Zero, "WorkerW", null);
+        return workerW;
+    }
+
+    // 포그라운드 창이 모니터를 가득 덮고 있으면(전체화면·최대화) 그 모니터를 돌려준다.
+    public static Screen? CoveredScreen()
+    {
+        IntPtr fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero || !IsWindowVisible(fg)) return null;
+        var sb = new StringBuilder(64);
+        GetClassName(fg, sb, 64);
+        string cls = sb.ToString();
+        if (cls is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return null;
+        var scr = Screen.FromHandle(fg);
+        if (IsZoomed(fg)) return scr;
+        if (!GetWindowRect(fg, out var r)) return null;
+        var b = scr.Bounds;
+        return r.L <= b.Left && r.T <= b.Top && r.R >= b.Right && r.B >= b.Bottom ? scr : null;
+    }
+
+    public static void RefreshWallpaper() => SystemParametersInfo(0x0014, 0, null, 0x01);
+}
