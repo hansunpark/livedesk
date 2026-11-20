@@ -8,7 +8,31 @@
 :root{--bg:#14161c;--panel:#1c1f28;--panel2:#252936;--line:#323748;--tx:#e6e8ef;--mut:#8b91a5;--acc:#6c8cff;--acc2:#4b6bff;--danger:#ff6b7a}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:#000;color:var(--tx);font:13px/1.4 system-ui,"Malgun Gothic",sans-serif;overflow:hidden}
-#app{display:grid;grid-template:48px 1fr/250px 1fr 290px;height:100%;background:var(--bg)}
+#app{display:grid;grid-template:48px 1fr auto/250px 1fr 290px;height:100%;background:var(--bg)}
+#left,#right{grid-row:2/4}#stage{grid-row:2;grid-column:2}
+/* 키프레임 타임라인 */
+#tl{grid-row:3;grid-column:2;background:var(--panel);border-top:1px solid var(--line);padding:6px 10px 8px;user-select:none;min-width:0}
+#tl[hidden]{display:none}
+#tl .bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+#tl .bar button{padding:3px 8px}#tl .bar input[type=number]{width:62px;padding:3px 5px}#tl .bar select{padding:3px 5px}
+#tl .bar .tm{font-variant-numeric:tabular-nums;min-width:112px;color:var(--mut)}#tl .bar .tm b{color:var(--tx)}
+#tl .bar .lb{color:var(--mut)}
+#tl .rec.on{border-color:#ff5a6e;color:#ff5a6e}
+#tl .tg{display:grid;grid-template-columns:76px 26px 66px 1fr;align-items:center;gap:0 6px}
+#tl .tg>span{color:var(--mut);white-space:nowrap}
+#tl .tg>button{padding:0;height:22px;color:var(--mut)}#tl .tg>button.on{color:var(--acc);border-color:var(--acc)}
+#tl .tg>input{padding:2px 5px;text-align:right;font-variant-numeric:tabular-nums;height:22px}
+#tl .lane{position:relative;height:24px;margin:2px 9px;border-bottom:1px solid #ffffff0d;cursor:col-resize}
+#tl .lane.ruler{height:18px;border-bottom:1px solid var(--line)}
+#tl .lane.ruler em{position:absolute;bottom:0;transform:translateX(-50%);font-size:10px;font-style:normal;color:var(--mut);pointer-events:none}
+#tl .lane.ruler em::after{content:"";position:absolute;left:50%;bottom:-1px;height:4px;border-left:1px solid var(--line)}
+#tl .lane .seg{position:absolute;top:50%;height:2px;margin-top:-1px;background:#6c8cff55;pointer-events:none}
+#tl .ph{position:absolute;top:-2px;bottom:-2px;width:0;border-left:2px solid #ff5a6e;pointer-events:none;z-index:2}
+#tl .ruler .ph::before{content:"";position:absolute;left:-6px;top:0;border:5px solid transparent;border-top:7px solid #ff5a6e}
+#tl .kf{position:absolute;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;background:#cfd6ea;border:1px solid #0008;transform:rotate(45deg);cursor:grab;z-index:3}
+#tl .kf.hold{transform:none;border-radius:1px}
+#tl .kf.sel{background:var(--acc);box-shadow:0 0 0 2px #fff}
+#tl .note{margin:4px 0 0}
 header{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line)}
 header .logo{font-weight:700;font-size:15px;margin-right:10px;letter-spacing:.3px}
 header .logo b{color:var(--acc)}
@@ -60,7 +84,7 @@ input[type=range]{accent-color:var(--acc);min-width:0}
 body.drop #stage{outline:2px dashed var(--acc);outline-offset:-8px}
 /* 전체화면(배경화면 / 미리보기) */
 body.full #app{display:block;background:#000}
-body.full header,body.full aside,body.full #selbox{display:none}
+body.full header,body.full aside,body.full #selbox,body.full #tl{display:none}
 body.full #stage{position:fixed;inset:0;background:#000}
 body.full #cv{box-shadow:none}
 body.full.pv #hint{display:block}
@@ -149,6 +173,7 @@ body:not(.hosted) .hostonly{display:none}
   <canvas id="cv"></canvas>
   <div id="selbox" hidden><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i><i data-h="rot"></i></div>
  </main>
+ <div id="tl" hidden></div>
  <aside id="right"></aside>
 </div>
 <div id="hint">미리보기 중 — Esc 또는 클릭으로 돌아가기</div>
@@ -266,6 +291,11 @@ const PRESETS=[
   ['💠','보석 조각',S=>cpart(S,'보석 조각',60,.7,6,'#7ae0ff',{shape:'diamond',dir:90,spread:20,spin:120,wobble:15,twinkle:true},'lighter')],
  ]],
  ['직접 만들기',[
+  ['🎬','키프레임 움직임',S=>shp(S,'키프레임 움직임','star','#7ce3ff',{glow:14},{w:S.h*.1,h:S.h*.1,anims:[{type:'keys',period:4,mode:'loop',tracks:{
+    x:[{t:0,v:-S.w*.2,e:'ease'},{t:.5,v:S.w*.2,e:'ease'}],
+    y:[{t:0,v:0,e:'out'},{t:.25,v:-S.h*.18,e:'in'},{t:.5,v:0,e:'out'},{t:.75,v:-S.h*.18,e:'in'}],
+    rot:[{t:0,v:0,e:'ease'},{t:.5,v:180,e:'ease'}],
+    scale:[{t:0,v:115,e:'out'},{t:.1,v:100,e:'linear'},{t:.5,v:115,e:'out'},{t:.6,v:100,e:'linear'}]}}]}),L=>{seekKeys(0);toast('아래 타임라인에서 키를 고치거나, 시간 위치를 고른 뒤 캔버스에서 끌어 보세요');}],
   ['🧩','도형 파티클',S=>cpart(S,'도형 파티클',60,1,8,'#ffffff',{shape:'star'})],
   ['🖼️','이미지 파티클',S=>cpart(S,'이미지 파티클',30,1,18,'#ffffff',{src:'image',spin:0}),L=>pickAsset(L)],
   ['〰️','경로 따라 이동',S=>shp(S,'경로 따라 이동','star','#ffd84a',{glow:14},{w:S.h*.1,h:S.h*.1,anims:[JSON.parse(JSON.stringify(Object.assign({type:'path'},PATH_D)))]}),L=>startPath(L,L.anims[0])],
@@ -284,7 +314,24 @@ const ANIMS={
  shake:{name:'떨림',d:{amp:4,period:1},f:[['amp','세기(px)',0,60,1],['period','느리기(초)',.2,10,.1]]},
  parallax:{name:'마우스 따라 움직임',d:{amp:30},f:[['amp','거리(px)',-200,200,1]]},
  path:{name:'직접 그린 경로',d:PATH_D,f:[['period','한 번(초)',.5,60,.1]]},
+ keys:{name:'키프레임 (타임라인)',d:{period:4,mode:'loop',tracks:{}},f:[]},
 };
+/* 키프레임: 한 주기(period초)를 0~1로 보고, 속성마다 {t:0~1, v:값, e:다음 키까지의 보간} 목록을 둔다.
+   값은 레이어 기본 상태에 더해지는 양(이동·회전) 또는 곱해지는 비율(크기·불투명도 %). */
+const KTRACKS=[['x','X 이동','px',0],['y','Y 이동','px',0],['rot','회전','°',0],['scale','크기','%',100],['opacity','불투명도','%',100]];
+const KDEF=Object.fromEntries(KTRACKS.map(t=>[t[0],t[3]]));
+const EASES=[['ease','부드럽게 (가감속)'],['linear','일정한 속도'],['in','천천히 출발'],['out','천천히 도착'],['hold','멈췄다 다음 키로 점프']];
+const EASE_F={linear:u=>u,ease:u=>u<.5?4*u*u*u:1-Math.pow(-2*u+2,3)/2,in:u=>u*u*u,out:u=>1-Math.pow(1-u,3),hold:()=>0};
+function keyPhase(a,t){let u=t/Math.max(.05,a.period||1);
+ if(a.mode==='pingpong'){u%=2;if(u<0)u+=2;return u>1?2-u:u;}u%=1;return u<0?u+1:u;}
+/* loop이면 마지막 키 → 다음 주기 첫 키로 이어서 보간해 끊김 없이 반복된다 */
+function trackVal(K,u,def,wrap){if(!K||!K.length)return def;if(K.length===1)return K[0].v;
+ let i=0;while(i<K.length&&K[i].t<=u)i++;let A,B,span,d;
+ if(i===0||i===K.length){const lst=K[K.length-1],fst=K[0];if(!wrap)return i===0?fst.v:lst.v;
+  A=lst;B=fst;span=1-lst.t+fst.t;d=i===0?u+1-lst.t:u-lst.t;}
+ else{A=K[i-1];B=K[i];span=B.t-A.t;d=u-A.t;}
+ const f=span>1e-9?Math.min(1,Math.max(0,d/span)):0;return A.v+(B.v-A.v)*(EASE_F[A.e]||EASE_F.linear)(f);}
+const kval=(a,tr,u)=>trackVal(a.tracks&&a.tracks[tr],u,KDEF[tr],a.mode!=='pingpong');
 function defaultScene(){const S={v:1,w:1920,h:1080,fps:30,quality:1,bg:{c1:'#070b1f',c2:'#3a1d5c',angle:70},layers:[]};
  const P=n=>preset(n)(S);
  const ff=P('반딧불');ff.props.count=36;
@@ -339,8 +386,11 @@ function shapePath(c,s,rx,ry){c.beginPath();
 function bmpOf(im){if(!im||!im.frames)return im;const tm=(T*1000)%im.total,e=im.ends;let i=0;while(i<e.length-1&&e[i]<=tm)i++;return im.frames[i];}
 
 function animXf(L,t,S){let x=L.x,y=L.y,rot=L.rot,s=1,op=1;
- if(animate)for(const a of L.anims){const w=TAU*t/Math.max(.05,a.period||1);
+ // 에디터에서 정지 중이면 다른 움직임은 끄되 키프레임은 현재 시간 위치의 모습으로 보여 준다 (타임라인 편집용)
+ for(const a of L.anims){if(!animate&&a.type!=='keys')continue;const w=TAU*t/Math.max(.05,a.period||1);
   switch(a.type){
+   case'keys':{const u=keyPhase(a,t);x+=kval(a,'x',u);y+=kval(a,'y',u);rot+=kval(a,'rot',u);
+    s*=Math.max(0,kval(a,'scale',u))/100;op*=Math.min(1,Math.max(0,kval(a,'opacity',u)/100));break;}
    case'float':y+=Math.sin(w)*a.amp;break;
    case'sway':rot+=Math.sin(w)*a.amp;break;
    case'spin':rot+=t*a.amp;break;
@@ -442,7 +492,7 @@ function render(dt,c=ctx,S=scene,V=view){const K=V.s,now=new Date();
    case'wave':drawWave(c,L,T);break;
   }
   c.restore();}
- if(c===ctx&&!isFull()){drawPaths(c,K);updateSel();}}
+ if(c===ctx&&!isFull()){drawPaths(c,K);updateSel();tlTick();}}
 
 function analyze(){let cont=false,tk=false,ms=false;
  for(const L of scene.layers){if(!L.visible)continue;
@@ -499,6 +549,89 @@ function cancelPath(){if(!pathEdit)return false;pathEdit=null;document.body.clas
 function endPath(){if(cancelPath()){commit();renderInspector();}}
 function pickAsset(L){const f=$('#fAsset');f.onchange=async()=>{const r=await storeImage(f.files[0]);f.value='';if(!r)return;L.props.asset=r.id;L.props.src='image';commit();renderInspector();};f.click();}
 const selLayer=()=>scene.layers.find(L=>L.id===sel)||null;
+
+/* ───────── 키프레임 타임라인 ─────────
+   ● 자동 키가 켜져 있으면, 정지 상태에서 캔버스로 옮기기/크기/회전한 결과가 현재 시간 위치의 키가 된다 */
+let rec=true,selKey=null,tlRefs=null;
+const keysOf=L=>L&&L.anims.find(a=>a.type==='keys')||null;
+const tlAnim=()=>keysOf(selLayer());
+const kPer=a=>Math.max(.05,a.period||1);
+const kTol=a=>.5/(scene.fps*kPer(a));                       // 반 프레임
+const kSnap=(a,u)=>{const n=scene.fps*kPer(a);return Math.min(1,Math.max(0,Math.round(u*n)/n));};
+const keyAt=(a,tr,u)=>{const K=a.tracks[tr];return K?K.find(k=>Math.abs(k.t-u)<=kTol(a))||null:null;};
+const kRound=v=>Math.round(v*10)/10;
+function setAnimate(on){animate=on;const b=$('#bAnim');if(b){b.classList.toggle('on',on);b.textContent=(on?'▶':'⏸')+' 움직임';}last=performance.now();schedule();}
+function seekKeys(u){const a=tlAnim();setAnimate(false);if(a)T=Math.min(1,Math.max(0,u))*kPer(a);schedule();}
+/* 키를 넣거나 고친다. 비어 있던 속성에 처음 키를 넣으면 0초에 기본값 키를 함께 넣어 "가만히 있다가 → 움직임"이 되게 한다 */
+function setKey(a,tr,u,v){if(!a.tracks)a.tracks={};const K=a.tracks[tr]||(a.tracks[tr]=[]);u=kSnap(a,u);v=kRound(v);
+ let k=keyAt(a,tr,u);if(k){k.v=v;return k;}
+ if(!K.length&&u>kTol(a))K.push({t:0,v:KDEF[tr],e:'ease'});
+ k={t:u,v,e:'ease'};K.push(k);K.sort((p,q)=>p.t-q.t);return k;}
+function keyIfChanged(a,tr,u,v,v0){if(Math.abs(v-v0)<.5&&!keyAt(a,tr,u))return;setKey(a,tr,u,v);}
+function delKey(a,tr,k){const K=a.tracks[tr];if(!K)return;const i=K.indexOf(k);if(i>=0)K.splice(i,1);if(!K.length)delete a.tracks[tr];if(selKey&&selKey.k===k)selKey=null;}
+const allKeyTimes=a=>[...new Set(Object.values(a.tracks||{}).flat().map(k=>k.t))].sort((p,q)=>p-q);
+/* 편집용 모습: 정지 중이고 키프레임이 있으면 현재 시간의 모습, 아니면 기본 상태 */
+function poseOf(L){if(!animate&&keysOf(L)){const x=animXf(L,T,scene);return{x:x.x,y:x.y,rot:x.rot,s:x.s};}return{x:L.x,y:L.y,rot:L.rot,s:1};}
+
+function renderTimeline(){const box=$('#tl'),a=tlAnim();tlRefs=null;box.textContent='';
+ if(!a||pathEdit){box.hidden=true;return;}box.hidden=false;
+ if(selKey&&!(a.tracks[selKey.tr]||[]).includes(selKey.k))selKey=null;
+ const L=selLayer(),bar=el('div','bar'),B=(tx,ti,fn,cls)=>{const b=el('button',cls||'',tx);b.title=ti;b.onclick=fn;bar.append(b);return b;};
+ const play=B('▶','재생 / 정지 (Space)',()=>setAnimate(!animate));
+ B('⏮','처음으로',()=>seekKeys(0));
+ B('◀◆','이전 키로',()=>{const u=keyPhase(a,T),ts=allKeyTimes(a).filter(t=>t<u-kTol(a));seekKeys(ts.length?ts[ts.length-1]:0);});
+ B('◆▶','다음 키로',()=>{const u=keyPhase(a,T),ts=allKeyTimes(a).filter(t=>t>u+kTol(a));if(ts.length)seekKeys(ts[0]);});
+ const tm=el('span','tm');bar.append(tm);
+ const per=el('input');per.type='number';per.min=.2;per.max=600;per.step=.1;per.value=kPer(a);per.title='한 주기의 길이(초). 키들은 주기에 맞춰 같이 늘어나거나 줄어듭니다';
+ per.onchange=()=>{const v=+per.value;if(v>=.2){const u=keyPhase(a,T);a.period=Math.min(600,v);T=u*a.period;commit();renderInspector();}else per.value=kPer(a);};
+ bar.append(el('span','lb','주기'),per,el('span','lb','초'));
+ const md=el('select');md.add(new Option('반복 (끝→처음 이어서)','loop'));md.add(new Option('왕복 (앞으로↔뒤로)','pingpong'));md.value=a.mode||'loop';
+ md.onchange=()=>{a.mode=md.value;commit();renderInspector();};bar.append(md);
+ const rb=B('● 자동 키','켜져 있으면: 정지 상태에서 캔버스로 옮기기/크기/회전하면 현재 시간 위치에 키가 찍힙니다\n꺼져 있으면: 움직임 전체(기본 위치)를 옮깁니다',()=>{rec=!rec;renderTimeline();},'rec'+(rec?' on':''));
+ bar.append(el('div','sp'));
+ if(selKey){const k=selKey.k,es=el('select');for(const[v,n]of EASES)es.add(new Option(n,v));es.value=k.e||'linear';es.title='이 키에서 다음 키까지 움직이는 방식';
+  es.onchange=()=>{k.e=es.value;commit();renderTimeline();};
+  bar.append(el('span','lb',KTRACKS.find(t=>t[0]===selKey.tr)[1]+' 키 →'),es);
+  B('✕ 키 삭제','선택한 키 삭제 (Delete)',()=>{delKey(a,selKey.tr,k);commit();renderTimeline();});}
+ const tg=el('div','tg'),phs=[],vals={},dots={};
+ const lane=(cls)=>{const ln=el('div','lane'+(cls?' '+cls:'')),ph=el('div','ph');ln.append(ph);phs.push(ph);return ln;};
+ const uOf=(ln,e)=>{const r=ln.getBoundingClientRect();return Math.min(1,Math.max(0,(e.clientX-r.left)/r.width));};
+ const scrub=ln=>{ln.onpointerdown=e=>{if(e.button!==0||e.target.classList.contains('kf'))return;ln.setPointerCapture(e.pointerId);
+   if(selKey){selKey=null;seekKeys(kSnap(a,uOf(ln,e)));renderTimeline();return;}seekKeys(kSnap(a,uOf(ln,e)));
+   ln.onpointermove=ev=>seekKeys(kSnap(a,uOf(ln,ev)));ln.onpointerup=ln.onpointercancel=()=>{ln.onpointermove=null;};};};
+ // 눈금
+ const ru=lane('ruler'),p=kPer(a),step=[.1,.25,.5,1,2,5,10,15,30,60,120].find(s=>p/s<=10)||300;
+ for(let s=0;s<=p+1e-6;s+=step){const m=el('em','',(Math.round(s*100)/100)+'s');m.style.left=s/p*100+'%';ru.append(m);}
+ scrub(ru);tg.append(el('span'),el('span'),el('span'),ru);
+ for(const[tr,name,unit]of KTRACKS){const K=a.tracks[tr]||[];
+  const dot=el('button','','◆');dot.title='현재 시간 위치에 키 넣기 / 빼기';dots[tr]=dot;
+  dot.onclick=()=>{const u=keyPhase(a,T),k=keyAt(a,tr,u);if(k)delKey(a,tr,k);else{setAnimate(false);selKey={tr,k:setKey(a,tr,u,kval(a,tr,u))};}commit();renderTimeline();};
+  const vi=el('input');vi.type='number';vi.step=tr==='x'||tr==='y'?1:.5;vi.title=name+' ('+unit+') — 고치면 현재 시간 위치에 키가 찍힙니다';vals[tr]=vi;
+  vi.onchange=()=>{if(vi.value===''||isNaN(+vi.value))return;setAnimate(false);selKey={tr,k:setKey(a,tr,keyPhase(a,T),+vi.value)};commit();renderTimeline();};
+  const ln=lane();
+  // 키 사이 구간 표시
+  for(let i=0;i+1<K.length;i++){if(K[i].e==='hold')continue;const sg=el('div','seg');sg.style.left=K[i].t*100+'%';sg.style.width=(K[i+1].t-K[i].t)*100+'%';ln.append(sg);}
+  for(const k of K){const d=el('i','kf'+(k.e==='hold'?' hold':'')+(selKey&&selKey.k===k?' sel':''));d.style.left=k.t*100+'%';
+   d.title=name+' '+kRound(k.v)+unit+' @ '+(Math.round(k.t*p*100)/100)+'s · 끌어서 시간 이동 · Delete로 삭제';
+   d.onpointerdown=e=>{if(e.button!==0)return;e.stopPropagation();d.setPointerCapture(e.pointerId);selKey={tr,k};seekKeys(k.t);
+    for(const x of ln.querySelectorAll('.kf'))x.classList.toggle('sel',x===d);let moved=false;
+    d.onpointermove=ev=>{const u=kSnap(a,uOf(ln,ev));if(u===k.t)return;moved=true;k.t=u;K.sort((p,q)=>p.t-q.t);d.style.left=u*100+'%';seekKeys(u);};
+    d.onpointerup=d.onpointercancel=()=>{d.onpointermove=null;
+     if(moved){const o=K.find(q=>q!==k&&Math.abs(q.t-k.t)<=kTol(a));if(o)K.splice(K.indexOf(o),1);K.sort((p,q)=>p.t-q.t);commit();}renderTimeline();};};
+   ln.append(d);}
+  ln.ondblclick=e=>{if(e.target!==ln)return;const u=kSnap(a,uOf(ln,e));setAnimate(false);selKey={tr,k:setKey(a,tr,u,kval(a,tr,u))};T=u*p;commit();renderTimeline();};
+  scrub(ln);
+  tg.append(el('span','',name),dot,vi,ln);}
+ box.append(bar,tg);
+ const n=Object.values(a.tracks||{}).reduce((s,K)=>s+K.length,0);
+ if(!n)box.append(el('div','note','시작하기: 위 눈금을 눌러 시간 위치를 고른 뒤 캔버스에서 레이어를 끌거나(자동 키), 값 칸에 숫자를 넣으세요. 키가 찍힌 시간들 사이는 자동으로 이어집니다. 레인을 더블클릭해도 키가 생깁니다.'));
+ tlRefs={a,phs,vals,dots,tm,play,L};tlTick();}
+function tlTick(){const R=tlRefs;if(!R)return;const a=R.a,u=keyPhase(a,T),act=document.activeElement;
+ for(const ph of R.phs)ph.style.left=u*100+'%';
+ R.tm.innerHTML='<b>'+(u*kPer(a)).toFixed(2)+'</b> / '+kPer(a).toFixed(2)+'초';
+ R.play.textContent=animate?'⏸':'▶';
+ for(const[tr]of KTRACKS){if(act!==R.vals[tr]){const v=String(kRound(kval(a,tr,u)));if(R.vals[tr].value!==v)R.vals[tr].value=v;}
+  R.dots[tr].classList.toggle('on',!!keyAt(a,tr,u));}}
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove('show'),2200);}
 function touched(){analyze();}
 function commit(){const j=JSON.stringify(scene);if(j===hist[hi])return;hist.length=hi+1;hist.push(j);if(hist.length>120)hist.shift();hi=hist.length-1;
@@ -545,7 +678,7 @@ const TYPE_NAME={image:'이미지',text:'텍스트',clock:'시계',date:'날짜'
 function isC(p){return p.kind==='custom';}
 function kindChanged(){const L=selLayer();if(L&&isC(L.props)){for(const k in CUSTOM_D)if(L.props[k]==null)L.props[k]=CUSTOM_D[k];commit();}renderInspector();}
 function renderInspector(){const R=$('#right');R.textContent='';xf=null;const L=selLayer();
- if(!L){R.append(el('div','empty','레이어를 선택하면 속성과 움직임을 편집할 수 있습니다.'));return;}
+ if(!L){R.append(el('div','empty','레이어를 선택하면 속성과 움직임을 편집할 수 있습니다.'));renderTimeline();return;}
  R.append(el('h3','',TYPE_NAME[L.type]+' 속성'));
  R.append(row('이름',L,'name','text'));
  const two=el('div','two');xf={};
@@ -575,10 +708,18 @@ function renderInspector(){const R=$('#right');R.textContent='';xf=null;const L=
    c.append(row('반복 방식',a,'mode','select',{opts:[['pingpong','왕복'],['loop','한 바퀴 돌아 처음으로'],['restart','끝에서 처음으로 점프']]}),
     row('곡선으로',a,'smooth','checkbox'),row('가감속',a,'ease','checkbox'),row('진행 방향으로 회전',a,'rotate','checkbox'),pr,
     el('div','note',ed?'캔버스를 클릭해 점을 찍는 중입니다.':a.pts.length?'점 '+a.pts.length+'개 — 레이어의 현재 위치에서 출발합니다.':'아직 점이 없습니다. "경로 그리기"를 누르고 캔버스를 클릭하세요.'));}
+  if(a.type==='keys'){const n=Object.values(a.tracks||{}).reduce((s,K)=>s+K.length,0),pr=el('div','row'),cl=el('button','','키 모두 지우기');cl.style.flex='1';
+   cl.onclick=()=>{a.tracks={};selKey=null;commit();renderInspector();};pr.append(cl);
+   c.append(row('한 주기(초)',a,'period','range',{min:.2,max:60,step:.1,done:renderTimeline}),
+    row('반복 방식',a,'mode','select',{opts:[['loop','반복 (끝→처음 이어서)'],['pingpong','왕복']],done:renderTimeline}),pr,
+    el('div','note','키 '+n+'개 — 아래 타임라인에서 편집합니다. 주기를 바꾸면 키들의 간격도 같은 비율로 늘어나거나 줄어듭니다.'));}
   R.append(c);});
  const ar=el('div','row'),s=el('select');for(const k in ANIMS)s.add(new Option(ANIMS[k].name,k));const ab=el('button','pri','＋ 추가');
- ab.onclick=()=>{const a=Object.assign({type:s.value},JSON.parse(JSON.stringify(ANIMS[s.value].d)));L.anims.push(a);commit();if(a.type==='path'){cancelPath();startPath(L,a);}else renderInspector();};ar.append(s,ab);R.append(ar);
- if(!L.anims.length){const h=el('div','','움직임을 여러 개 겹쳐서 쓸 수 있습니다. 예) 둥실둥실 + 흔들흔들');h.style.color='var(--mut)';R.append(h);}}
+ ab.onclick=()=>{if(s.value==='keys'&&keysOf(L)){toast('키프레임 움직임은 레이어마다 하나입니다 — 아래 타임라인에서 편집하세요');return;}
+  const a=Object.assign({type:s.value},JSON.parse(JSON.stringify(ANIMS[s.value].d)));L.anims.push(a);commit();if(a.type==='path'){cancelPath();startPath(L,a);}
+  else{renderInspector();if(a.type==='keys'){seekKeys(0);toast('시간 위치를 고른 뒤 캔버스에서 레이어를 끌면 키가 찍힙니다');}}};ar.append(s,ab);R.append(ar);
+ if(!L.anims.length){const h=el('div','','움직임을 여러 개 겹쳐서 쓸 수 있습니다. 예) 둥실둥실 + 흔들흔들. 원하는 대로 정하려면 "키프레임 (타임라인)"을 추가하세요.');h.style.color='var(--mut)';R.append(h);}
+ renderTimeline();}
 function syncXf(){const L=selLayer();if(!xf||!L)return;for(const k in xf)if(document.activeElement!==xf[k])xf[k].value=Math.round(L[k]);}
 function renderLayers(){const B=$('#layers');B.textContent='';
  for(let i=scene.layers.length-1;i>=0;i--){const L=scene.layers[i],r=el('div','layer'+(L.id===sel?' sel':''));
@@ -594,13 +735,14 @@ function refreshUI(){renderLayers();renderInspector();renderBg();
  if(!has)s.add(new Option(scene.w+' × '+scene.h,v));s.add(new Option('내 화면에 맞춤','screen'));s.value=v;
  $('#sFps').value=String(scene.fps);$('#sQ').value=String(scene.quality||1);}
 function setRes(w,h){const sx=w/scene.w,sy=h/scene.h;for(const L of scene.layers){L.x*=sx;L.y*=sy;const full=L.type==='particles'||L.type==='wave';L.w*=sx;L.h*=full?sy:sx;
-  for(const a of L.anims)if(a.type==='path')a.pts=a.pts.map(p=>[Math.round(p[0]*sx),Math.round(p[1]*sy)]);}
+  for(const a of L.anims){if(a.type==='path')a.pts=a.pts.map(p=>[Math.round(p[0]*sx),Math.round(p[1]*sy)]);
+   if(a.type==='keys'&&a.tracks){for(const k of a.tracks.x||[])k.v=kRound(k.v*sx);for(const k of a.tracks.y||[])k.v=kRound(k.v*sy);}}}
  scene.w=w;scene.h=h;commit();layout();refreshUI();}
-function updateSel(){const sb=$('#selbox'),L=selLayer();if(!L||pathEdit){sb.hidden=true;return;}sb.hidden=false;const k=view.k;
- sb.style.width=L.w*k+'px';sb.style.height=L.h*k+'px';sb.style.left=view.left+L.x*k+'px';sb.style.top=view.top+L.y*k+'px';sb.style.transform=`translate(-50%,-50%) rotate(${L.rot}deg)`;}
+function updateSel(){const sb=$('#selbox'),L=selLayer();if(!L||pathEdit){sb.hidden=true;return;}sb.hidden=false;const k=view.k,P=poseOf(L);
+ sb.style.width=L.w*P.s*k+'px';sb.style.height=L.h*P.s*k+'px';sb.style.left=view.left+P.x*k+'px';sb.style.top=view.top+P.y*k+'px';sb.style.transform=`translate(-50%,-50%) rotate(${P.rot}deg)`;}
 const toScene=e=>{const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)/view.k,y:(e.clientY-r.top)/view.k};};
 const toLocal=(L,p)=>{const dx=p.x-L.x,dy=p.y-L.y,a=-L.rot*RAD,c=Math.cos(a),s=Math.sin(a);return{x:dx*c-dy*s,y:dx*s+dy*c};};
-const inside=(L,p)=>{const l=toLocal(L,p);return Math.abs(l.x)<=L.w/2&&Math.abs(l.y)<=L.h/2;};
+const inside=(L,p)=>{const P=poseOf(L),l=toLocal(P,p);return Math.abs(l.x)<=L.w*P.s/2&&Math.abs(l.y)<=L.h*P.s/2;};
 function hitTest(p){const cur=selLayer();if(cur&&cur.visible&&inside(cur,p))return cur;
  for(let i=scene.layers.length-1;i>=0;i--){const L=scene.layers[i];if(L.visible&&!L.locked&&inside(L,p))return L;}return null;}
 
@@ -694,7 +836,7 @@ function buildUI(){
  $('#cAuto').onchange=e=>host.postMessage({type:'setAutoStart',on:e.target.checked});
  $('#bExport').onclick=exportScene;$('#bApply').onclick=apply;$('#bPreview').onclick=()=>setPreview(true);
  $('#bUndo').onclick=()=>travel(-1);$('#bRedo').onclick=()=>travel(1);
- $('#bAnim').onclick=e=>{animate=!animate;e.target.classList.toggle('on',animate);e.target.textContent=(animate?'▶':'⏸')+' 움직임';};
+ $('#bAnim').onclick=()=>setAnimate(!animate);
  $('#sRes').onchange=e=>{if(e.target.value==='screen'){const d=window.devicePixelRatio||1;setRes(Math.round(screen.width*d),Math.round(screen.height*d));}else{const[w,h]=e.target.value.split('x').map(Number);setRes(w,h);}};
  $('#sFps').onchange=e=>{scene.fps=+e.target.value;commit();};
  $('#sQ').onchange=e=>{scene.quality=+e.target.value;commit();};
@@ -705,15 +847,28 @@ function buildUI(){
    drag={kind:'pt',L:PL,a,i,moved:true};stage.setPointerCapture(e.pointerId);e.preventDefault();return;}
   if(h&&L)drag={kind:h==='rot'?'rot':'size',L,w0:L.w,h0:L.h};
   else{const hit=hitTest(p);select(hit?hit.id:null);if(hit)drag={kind:'move',L:hit,dx:p.x-hit.x,dy:p.y-hit.y};}
-  if(drag){stage.setPointerCapture(e.pointerId);e.preventDefault();}});
+  if(drag){const KA=keysOf(drag.L);
+   // 자동 키: 키프레임이 있는 레이어를 정지 상태로 만들고, 바뀐 만큼을 현재 시간 위치의 키로 기록한다
+   if(rec&&KA&&drag.L===selLayer()){setAnimate(false);const u=keyPhase(KA,T),P=poseOf(drag.L);
+    Object.assign(drag,{key:true,a:KA,u,P,p0:p,v0:Object.fromEntries(KTRACKS.map(([tr])=>[tr,kval(KA,tr,u)])),ang0:Math.atan2(p.y-P.y,p.x-P.x)/RAD});}
+   else drag.P=poseOf(drag.L);
+   stage.setPointerCapture(e.pointerId);e.preventDefault();}});
  stage.addEventListener('pointermove',e=>{if(!drag)return;const p=toScene(e),L=drag.L;
   if(drag.kind==='pt'){drag.a.pts[drag.i]=[Math.round(p.x-L.x),Math.round(p.y-L.y)];return;}
+  if(drag.key){const a=drag.a,u=drag.u,v0=drag.v0,P=drag.P;
+   if(!drag.moved&&Math.hypot(p.x-drag.p0.x,p.y-drag.p0.y)<3/view.k)return;
+   if(drag.kind==='move'){keyIfChanged(a,'x',u,v0.x+p.x-drag.p0.x,v0.x);keyIfChanged(a,'y',u,v0.y+p.y-drag.p0.y,v0.y);}
+   else if(drag.kind==='size'){const l=toLocal(P,p),ns=Math.max(Math.abs(l.x)/(L.w/2),Math.abs(l.y)/(L.h/2))*v0.scale/Math.max(1e-3,P.s);
+    keyIfChanged(a,'scale',u,Math.max(1,Math.round(ns)),v0.scale);}
+   else{let d=Math.atan2(p.y-P.y,p.x-P.x)/RAD-drag.ang0;d=((d+540)%360)-180;let v=v0.rot+d;if(e.shiftKey)v=Math.round(v/15)*15;keyIfChanged(a,'rot',u,v,v0.rot);}
+   drag.moved=true;tlTick();updateSel();return;}
+  const P=drag.P;   // 화면에 보이는 모습(P)과 기본 상태(L)의 차이를 유지한 채 기본 상태를 바꾼다
   if(drag.kind==='move'){L.x=Math.round(p.x-drag.dx);L.y=Math.round(p.y-drag.dy);}
-  else if(drag.kind==='size'){const l=toLocal(L,p);let w=Math.max(8,Math.abs(l.x)*2),h=Math.max(8,Math.abs(l.y)*2);
+  else if(drag.kind==='size'){const l=toLocal(P,p);let w=Math.max(8,Math.abs(l.x)*2/P.s),h=Math.max(8,Math.abs(l.y)*2/P.s);
    if(!e.shiftKey){const k=Math.max(w/drag.w0,h/drag.h0);w=drag.w0*k;h=drag.h0*k;}L.w=Math.round(w);L.h=Math.round(h);}
-  else{let a=Math.atan2(p.y-L.y,p.x-L.x)/RAD+90;if(e.shiftKey)a=Math.round(a/15)*15;L.rot=Math.round(((a+540)%360)-180);}
+  else{let a=Math.atan2(p.y-P.y,p.x-P.x)/RAD+90-(P.rot-L.rot);if(e.shiftKey)a=Math.round(a/15)*15;L.rot=Math.round(((a+540)%360)-180);}
   drag.moved=true;syncXf();updateSel();});
- const end=()=>{const d=drag;drag=null;if(d&&d.moved){commit();if(d.kind==='pt'&&pathEdit)renderInspector();}};
+ const end=()=>{const d=drag;drag=null;if(d&&d.moved){commit();if(d.kind==='pt'&&pathEdit)renderInspector();if(d.key)renderTimeline();}};
  stage.addEventListener('pointerup',end);stage.addEventListener('pointercancel',end);
  addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('drop');});
  addEventListener('dragleave',()=>document.body.classList.remove('drop'));
@@ -728,6 +883,8 @@ function buildUI(){
   if(ctrl&&k==='z'){e.preventDefault();travel(e.shiftKey?1:-1);}
   else if(ctrl&&k==='y'){e.preventDefault();travel(1);}
   else if(ctrl&&k==='d'){e.preventDefault();duplicate();}
+  else if(e.key===' '&&tlAnim()){e.preventDefault();setAnimate(!animate);}
+  else if(selKey&&tlAnim()&&(e.key==='Delete'||e.key==='Backspace')){e.preventDefault();delKey(tlAnim(),selKey.tr,selKey.k);commit();renderTimeline();}
   else if(L&&(e.key==='Delete'||e.key==='Backspace')){e.preventDefault();removeLayer(L.id);}
   else if(L&&e.key.startsWith('Arrow')){e.preventDefault();const d=e.shiftKey?10:1;
    if(e.key==='ArrowLeft')L.x-=d;if(e.key==='ArrowRight')L.x+=d;if(e.key==='ArrowUp')L.y-=d;if(e.key==='ArrowDown')L.y+=d;syncXf();commit();}
